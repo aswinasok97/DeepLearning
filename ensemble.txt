@@ -1,0 +1,126 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Jun 20 02:30:56 2023
+
+@author: aswin
+"""
+
+import tensorflow as tf
+print(tf.__version__)
+from tensorflow.keras.applications import VGG16
+import torch
+from torchvision.models import resnet50
+from efficientnet_pytorch import EfficientNet
+import matplotlib.pyplot as plt
+from sklearn.metrics import accuracy_score
+from tensorflow.keras.layers import Flatten, Dropout, Dense, concatenate
+from tensorflow.keras.models import Model
+from sklearn.model_selection import train_test_split
+
+from PIL import Image
+import numpy as np
+import os
+from sklearn.model_selection import train_test_split
+
+def preprocess_image(image):
+    # Resize the image to a desired size
+    image = image.resize((224, 224))
+
+    # Convert the image to grayscale
+    image = image.convert('L')
+
+    # Normalize the image pixel values to a specific range (e.g., [0, 1])
+    image = np.array(image) / 255.0
+
+    # Perform any other preprocessing steps specific to your requirements
+
+    return image
+
+
+# Define your dataset directory
+dataset_dir = 'F:\Casia-B\dataset'
+
+num_classes = len(os.listdir(dataset_dir))
+
+print('Number of classes:', num_classes)
+
+# Define the desired train-test split ratio
+test_size = 0.2
+
+# Initialize empty lists for storing data and labels
+data = []
+labels = []
+
+# Iterate through each subfolder in the dataset directory
+for subfolder_name in os.listdir(dataset_dir):
+    subfolder_path = os.path.join(dataset_dir, subfolder_name)
+    if not os.path.isdir(subfolder_path):
+        continue
+    
+    # Iterate through each sub-subfolder in the subfolder
+    for sub_subfolder_name in os.listdir(subfolder_path):
+        sub_subfolder_path = os.path.join(subfolder_path, sub_subfolder_name)
+        if not os.path.isdir(sub_subfolder_path):
+            continue
+        
+        # Iterate through each image in the sub-subfolder
+        for image_name in os.listdir(sub_subfolder_path):
+            image_path = os.path.join(sub_subfolder_path, image_name)
+            
+            # Check if the file has the desired extension
+            if not image_path.endswith('.png'):
+                continue
+            
+            # Load and preprocess the data
+            image = Image.open(image_path)
+            image_preprocessed = preprocess_image(image)
+            
+            # Extract the label from the subfolder name
+            label_parts = subfolder_name.split(' ')
+            label = int(label_parts[0])
+            
+            # Append the preprocessed data and label to the lists
+            data.append(image_preprocessed)
+            labels.append(label)
+
+# Convert the lists to numpy arrays
+data = np.array(data,dtype=np.float32)
+labels = np.array(labels)
+
+# Split the data into train and test sets
+train_data, test_data, train_labels, test_labels = train_test_split(data, labels, test_size=test_size, random_state=42)
+
+# Print the shape of the train and test sets
+print("Train data shape:", train_data.shape)
+print("Train labels shape:", train_labels.shape)
+print("Test data shape:", test_data.shape)
+print("Test labels shape:", test_labels.shape)
+
+# Define the ensemble model
+class EnsembleModel(tf.keras.Model):
+    def __init__(self, num_classes):
+        super(EnsembleModel, self).__init__()
+        self.vgg16 = VGG16(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
+        self.efficientnet = EfficientNet.from_pretrained('efficientnet-b7')
+        self.vision_transformer = resnet50(pretrained=True)
+        self.flatten = tf.keras.layers.Flatten()
+        self.dropout = tf.keras.layers.Dropout(0.5)
+        self.fc = tf.keras.layers.Dense(num_classes, activation='softmax')
+
+    def call(self, inputs):
+        vgg16_features = self.vgg16(inputs)
+        efficientnet_features = self.efficientnet(inputs)
+        vision_transformer_features = self.vision_transformer(inputs)
+
+        vgg16_features = self.flatten(vgg16_features)
+        efficientnet_features = self.flatten(efficientnet_features)
+        vision_transformer_features = self.flatten(vision_transformer_features)
+
+        features = tf.concat([vgg16_features, efficientnet_features, vision_transformer_features], axis=-1)
+        features = self.dropout(features)
+        outputs = self.fc(features)
+
+        return outputs
+    
+model = EnsembleModel(num_classes)    
+
